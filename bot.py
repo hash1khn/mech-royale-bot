@@ -12,11 +12,11 @@ import mechfight as mf
 TAU = 2 * math.pi
 NAME = "steelwit"
 # strategy knobs (variants are A/B tested with real submissions)
-RANGE_GUN = 75.0     # preferred fighting distance with the gun only
-RANGE_LASER = 110.0   # ... holding a laser
-ENGAGE_MAX = 260.0    # ignore mechs farther than this unless they are shooting us
-SEEK = True          # walk toward the last seen enemy when idle
-CUBE_R = 60.0         # leave a fight this far to pick up cubes (when healthy)
+RANGE_GUN = 100.0     # preferred fighting distance with the gun only
+RANGE_LASER = 130.0   # ... holding a laser
+ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
+SEEK = False          # walk toward the last seen enemy when idle
+CUBE_R = 150.0         # leave a fight this far to pick up cubes (when healthy)
 
 
 def wrap(a):
