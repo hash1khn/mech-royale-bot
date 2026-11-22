@@ -12,8 +12,8 @@ import mechfight as mf
 TAU = 2 * math.pi
 NAME = "steelwit"
 # strategy knobs (variants are A/B tested with real submissions)
-RANGE_GUN = 140.0     # preferred fighting distance with the gun only
-RANGE_LASER = 150.0   # ... holding a laser
+RANGE_GUN = 75.0     # preferred fighting distance with the gun only
+RANGE_LASER = 110.0   # ... holding a laser
 ENGAGE_MAX = 260.0    # ignore mechs farther than this unless they are shooting us
 SEEK = False          # walk toward the last seen enemy when idle
 CUBE_R = 60.0         # leave a fight this far to pick up cubes (when healthy)
