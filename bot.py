@@ -17,7 +17,7 @@ RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
 SEEK = False          # walk toward the last seen enemy when idle
 DUCK = True           # step out of sight of a laser that is charging on us
-SALT = 0              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
+SALT = 2              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
 USE_DROPS = True      # walk to supply drops
 CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
 CUBE_R = 150.0         # leave a fight this far to pick up cubes (when healthy)
@@ -292,7 +292,9 @@ UPGRADE_PRIORITY = ["plating", "armor", "laser_damage", "laser_charge", "nanites
                     "lightning_efficiency", "lightning_range", "servos", "gun_mag", "gun_velocity", "gyros",
                     "lightning_chain", "reactor", "capacitor", "mortar_reload", "mortar_splash", "mortar_velocity",
                     "sensors", "jets", "laser_pierce"]
-WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
+LIGHTNING_FIRST = True  # rank lightning above laser
+CUBE_CAP = 10            # stop farming cubes past this (stat cap is 10; upgrades continue at 15, 21)
+WEAPON_RANK = {"lightning": 3, "laser": 2, "mortar": 1, "gun": 0} if LIGHTNING_FIRST else {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
 
 
 class Bot:
@@ -799,7 +801,7 @@ class Bot:
                     want_los = -1.6
                 move = self.fight_move(obs, pos, target, mechs, want_los, rp, muzzle)
                 boost = "lightning" in kinds and d > 50 and me["energy"] > 55
-                if me.get("cubes", 0) < 10:
+                if me.get("cubes", 0) < CUBE_CAP:
                     cube_r = 40.0 * (0.57 if hpf <= 0.5 else 1.0)
                     cube = min((c for c in obs.get("cubes", []) if abs(c["pos"][2] - pos[2]) < 4), key=lambda c: hdist(c["pos"], pos), default=None)
                     if cube is not None and hdist(cube["pos"], pos) < cube_r:
@@ -817,7 +819,7 @@ class Bot:
                 boost = me["energy"] > 10
             for dr in (obs.get("drops", []) if USE_DROPS else []):
                 dd_ = hdist(dr["pos"], pos)
-                if dd_ < 140 and dr.get("lands_in", 99) < dd_ / 11 + 3 and (hpf < 0.7 or me.get("cubes", 0) < 10):
+                if dd_ < 140 and dr.get("lands_in", 99) < dd_ / 11 + 3 and (hpf < 0.7 or me.get("cubes", 0) < CUBE_CAP):
                     move = self.navigate(obs, (dr["pos"][0], dr["pos"][1]), now)
                     boost = boost or (dd_ > 20 and me["energy"] > 30)
                     break
@@ -1066,12 +1068,12 @@ class Bot:
             if W and ip[2] > W.ground(ip[0], ip[1]) + 3:
                 continue  # on a roof
             d = hdist(ip, pos)
-            if k == "laser":
+            if k == ("lightning" if LIGHTNING_FIRST else "laser"):
                 consider(ip, d - 230)   # hitscan at any range: worth a long walk
             elif d < 220:
                 consider(ip, d - 45 * (WEAPON_RANK.get(k, 0) - cur_rank))
         ncubes = obs["self"].get("cubes", 0)
-        want_cubes = ncubes < 10
+        want_cubes = ncubes < CUBE_CAP
         for c in (obs.get("cubes", []) if want_cubes else []):
             cp = c["pos"]
             if W and cp[2] > W.ground(cp[0], cp[1]) + 3 and abs(cp[2] - pos[2]) > 3:
