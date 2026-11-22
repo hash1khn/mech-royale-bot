@@ -16,6 +16,7 @@ RANGE_GUN = 100.0     # preferred fighting distance with the gun only
 RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
 SEEK = False          # walk toward the last seen enemy when idle
+DUCK = True           # step out of sight of a laser that is charging on us
 SALT = 0              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
 USE_DROPS = True      # walk to supply drops
 CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
@@ -453,15 +454,16 @@ class Bot:
         zlim = max(zr - 10.0, zr * 0.6)
         best, mx, my = -1e18, 0.0, 0.0
         blocked_side = False
-        for k in range(-1, 16):
+        rings = 2 if want_los < -1 else 1
+        for k in range(-1, 16 * rings):
             cx, cy, dx, dy, r = x, y, 0.0, 0.0, 0.0
             if k >= 0:
-                a = k * math.pi / 8
-                r = 6.0
+                a = (k % 16) * math.pi / 8
+                r = 6.0 * (1 + k // 16)
                 dx, dy = math.cos(a), math.sin(a)
                 cx, cy = x + dx * r, y + dy * r
-                if W.blk[W.ncell(cx, cy)] or W.blk[W.ncell(x + dx * 3, y + dy * 3)]:
-                    if dx * sx + dy * sy > 0.9:
+                if W.blk[W.ncell(cx, cy)] or W.blk[W.ncell(x + dx * 3, y + dy * 3)] or (r > 6 and (W.blk[W.ncell(x + dx * 6, y + dy * 6)] or W.blk[W.ncell(x + dx * 9, y + dy * 9)])):
+                    if k < 16 and dx * sx + dy * sy > 0.9:
                         blocked_side = True
                     continue
             cz = W.ground(cx, cy)
@@ -473,7 +475,7 @@ class Bot:
             for e in others:
                 ep = e["pos"]
                 if math.hypot(ep[0] - cx, ep[1] - cy) <= 170 and W.los(ep[0], ep[1], ep[2] + 8.0, cx, cy, cz + 5.4):
-                    s -= 30
+                    s -= 60 if (want_los < -1 and e.get("charging")) else 30
             ex = math.hypot(cx - zc[0], cy - zc[1]) - zlim
             if ex > 0:
                 s -= 2.0 * ex
@@ -787,7 +789,15 @@ class Bot:
                 rp = self.pref_range(me, kinds, target)
                 if tgt_hpf < 0.38 and hpf > 0.42 and crowd <= 2:
                     rp = 20.0   # close in to finish it (and to be standing on its cubes)
-                move = self.fight_move(obs, pos, target, mechs, 1.0 if ready else -1.0, rp, muzzle)
+                want_los = 1.0 if ready else -1.0
+                # an enemy laser is charging on us: lasers can't be sidestepped, so step out of its sight if cover is close
+                lw_ = next((w for w in weapons if w and w["kind"] == "laser"), None)
+                hot = lw_ is not None and (lw_.get("charge", 0) or 0) >= lw_["stats"].get("charge", 0.75) - 0.3
+                if DUCK and not hot and not finishing and any(
+                        m.get("charging") and m["_los"] and abs(wrap(m.get("aim", [0, 0])[0] - math.atan2(pos[1] - m["pos"][1], pos[0] - m["pos"][0]))) < 0.3
+                        for m in mechs):
+                    want_los = -1.6
+                move = self.fight_move(obs, pos, target, mechs, want_los, rp, muzzle)
                 boost = "lightning" in kinds and d > 50 and me["energy"] > 55
                 if me.get("cubes", 0) < 10:
                     cube_r = 40.0 * (0.57 if hpf <= 0.5 else 1.0)
