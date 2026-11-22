@@ -323,6 +323,8 @@ class Bot:
         self.npc_target = None
         self.last_pos = None
         self.taken_fail = {}
+        self.cube_spots = []  # (x, y, t) where a mech we killed fell
+        self.last_seen = {}   # id -> pos
 
     # ---------- helpers
     def eye(self, m, scale=1.0):
@@ -386,6 +388,20 @@ class Bot:
             if W.blk[c]:
                 return False
         return True
+
+    def steer(self, pos, mv):
+        """Turn a raw move vector away from walls: first free heading near the wanted one."""
+        W = self.world
+        l = math.hypot(mv[0], mv[1])
+        if not W or l < 0.2:
+            return mv
+        a0 = math.atan2(mv[1], mv[0])
+        for da in (0.0, 0.5, -0.5, 1.0, -1.0, 1.5, -1.5, 2.1, -2.1):
+            a = a0 + da
+            cx, cy = math.cos(a), math.sin(a)
+            if not W.blk[W.ncell(pos[0] + cx * 5, pos[1] + cy * 5)] and not W.blk[W.ncell(pos[0] + cx * 10, pos[1] + cy * 10)]:
+                return [cx, cy]
+        return mv
 
     def budget_left(self):
         return 0.042 - (time.perf_counter() - self.t_start)
@@ -464,6 +480,14 @@ class Bot:
                 self.items.pop(ev.get("id"), None)
             elif et == "took":
                 self.items.pop(ev.get("id"), None)
+            elif et == "kill":
+                lp = self.last_seen.get(ev.get("target"))
+                if lp is not None:
+                    self.cube_spots.append((lp[0], lp[1], now))
+        for m_ in obs.get("mechs", []):
+            if m_.get("kind") == "mech":
+                self.last_seen[m_["id"]] = m_["pos"]
+        self.cube_spots = [c for c in self.cube_spots if now - c[2] < 70 and hdist(c, pos) > 6]
 
         # ---- item memory
         for p in obs.get("pickups", []):
@@ -605,7 +629,11 @@ class Bot:
                     mx = math.cos(perp) + radial * math.cos(to_t)
                     my = math.sin(perp) + radial * math.sin(to_t)
                     n = math.hypot(mx, my) or 1
-                    move = [mx / n, my / n]
+                    move = self.steer(pos, [mx / n, my / n])
+                if not has_l and "laser" not in kinds and hpf > 0.45 and (slot1 is None or not slot1.get("charge")):
+                    li = min(((hdist(ip, pos), ip) for k_, ip, _t in self.items.values() if k_ == "laser"), default=None, key=lambda q: q[0])
+                    if li is not None and li[0] < 130 and li[0] < d + 30:
+                        move = self.navigate(obs, (li[1][0], li[1][1]), now)
                 if has_l:
                     boost = d > 40 and me["energy"] > 45 and target["_los"]
                 else:
@@ -823,6 +851,11 @@ class Bot:
             d = hdist(c["pos"], pos)
             if d < 120 and d - 30 < bs:
                 bs, best = d - 30, (c["pos"][0], c["pos"][1])
+        if not obs.get("cubes"):
+            for c in self.cube_spots:
+                d = hdist(c, pos)
+                if d < 220 and d - 60 < bs:
+                    bs, best = d - 60, (c[0], c[1])
         # supply drop
         for dr in obs.get("drops", []):
             d = hdist(dr["pos"], pos)
