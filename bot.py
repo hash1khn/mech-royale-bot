@@ -278,11 +278,11 @@ class World:
 
 
 # ---------------------------------------------------------------- bot
-UPGRADE_PRIORITY = ["armor", "plating", "nanites", "laser_damage", "gun_damage", "gun_rate", "laser_charge",
-                    "lightning_efficiency", "lightning_range", "gyros", "gun_mag", "servos", "gun_velocity",
+UPGRADE_PRIORITY = ["armor", "plating", "gun_damage", "gun_velocity", "laser_damage", "gun_rate", "nanites",
+                    "laser_charge", "gun_mag", "servos", "lightning_efficiency", "lightning_range", "gyros",
                     "capacitor", "reactor", "jets", "sensors", "mortar_reload", "lightning_chain",
                     "mortar_velocity", "mortar_splash", "laser_pierce"]
-WEAPON_RANK = {"lightning": 3, "laser": 2, "mortar": 1, "gun": 0}
+WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
 
 
 class Bot:
@@ -391,8 +391,9 @@ class Bot:
         return 0.042 - (time.perf_counter() - self.t_start)
 
     # ---------- aiming
-    def lead(self, me_pos, muzzle_h, tgt, speed):
+    def lead(self, me_pos, muzzle_h, tgt, speed, delay=0.075, k=0.8):
         p, v = tgt["pos"], tgt.get("vel", [0, 0, 0])
+        v = [v[0] * k, v[1] * k, v[2] if len(v) > 2 else 0.0]
         scale = 1 + 0.05 * tgt.get("cubes", 0) if tgt.get("kind") == "mech" else 1.0
         cz = 4.5 * scale if tgt.get("kind") == "mech" else 1.75
         ox, oy, oz = me_pos[0], me_pos[1], me_pos[2] + muzzle_h
@@ -400,7 +401,7 @@ class Bot:
         for _ in range(3):
             px, py, pz = p[0] + v[0] * t, p[1] + v[1] * t, p[2] + cz + v[2] * t * 0.5
             dist = math.sqrt((px - ox) ** 2 + (py - oy) ** 2 + (pz - oz) ** 2)
-            t = (dist + 0.0) / speed + 0.05
+            t = dist / speed + delay
         yaw = math.atan2(py - oy, px - ox)
         pitch = math.atan2(pz - oz, math.hypot(px - ox, py - oy))
         return yaw, pitch, dist
@@ -444,7 +445,7 @@ class Bot:
         if off and off.get("choices"):
             ids = [c["id"] for c in off["choices"]]
             held = {w["kind"] for w in me.get("weapons", []) if w}
-            pri = (["lightning_efficiency"] if "lightning" in held else []) + (["laser_damage"] if "laser" in held else []) + UPGRADE_PRIORITY
+            pri = UPGRADE_PRIORITY
             best = min(range(len(ids)), key=lambda i: pri.index(ids[i]) if ids[i] in pri else 99)
             act["pick"] = best
 
@@ -572,31 +573,43 @@ class Bot:
             to_t = math.atan2(tp[1] - pos[1], tp[0] - pos[0])
             d = target["_d"]
             if mode == "fight":
-                has_l = "lightning" in kinds and me["energy"] > 12
-                want = 26.0 if has_l else (115.0 if ("laser" in kinds) else 65.0)
-                if not target["_los"]:
-                    want = 20.0
+                has_l = "lightning" in kinds and me["energy"] > 25 and n_threat <= 1 and d < 70
+                want = 26.0 if has_l else (150.0 if ("laser" in kinds) else 140.0)
                 radial = 0.0
-                if d > want + 12:
-                    radial = 2.0 if has_l else 1.0
+                if has_l:
+                    if d > want + 12:
+                        radial = 2.0
+                    elif d < want - 12:
+                        radial = -0.7
+                elif d > want + 25:
+                    radial = 0.8
+                elif d < want - 45:
+                    radial = -2.2
                 elif d < want - 12:
-                    radial = -0.7
+                    radial = -1.0
                 if now > self.jink_t:
                     self.jink_t = now + random.uniform(0.4, 1.0)
                     self.jink_sign = random.choice((-1, 1))
                 perp = to_t + self.jink_sign * math.pi / 2
                 if not target["_los"]:
-                    mv = self.navigate(obs, tp, now)
-                    move = mv
+                    if has_l:
+                        move = self.navigate(obs, tp, now)
+                    elif d < 100:
+                        # out of sight and close: open the range, don't walk into its gun
+                        k_ = 60.0 / max(d, 1.0)
+                        away = (pos[0] + (pos[0] - tp[0]) * k_, pos[1] + (pos[1] - tp[1]) * k_)
+                        move = self.navigate(obs, away, now)
+                    else:
+                        move = [math.cos(perp) * 0.6, math.sin(perp) * 0.6]
                 else:
                     mx = math.cos(perp) + radial * math.cos(to_t)
                     my = math.sin(perp) + radial * math.sin(to_t)
                     n = math.hypot(mx, my) or 1
                     move = [mx / n, my / n]
-                if "lightning" in kinds:
-                    boost = d > 50 and me["energy"] > 45 and target["_los"]
+                if has_l:
+                    boost = d > 40 and me["energy"] > 45 and target["_los"]
                 else:
-                    boost = me["energy"] > 55
+                    boost = d < want - 45 and me["energy"] > 25
             else:  # retreat to cover
                 cov = self.find_cover(obs, pos, [m["pos"] for m in mechs if m["_d"] < 200], now)
                 if cov is not None:
@@ -722,7 +735,7 @@ class Bot:
                     full = ws.get("charge", 0.75)
                     if dist < ws.get("range", 280):
                         if w1.get("cooldown", 0) <= 0.1 or ch > 0:
-                            lyaw, lpitch, _ = self.lead(pos, muzzle, shoot, 1e5)
+                            lyaw, lpitch, _ = self.lead(pos, muzzle, shoot, 1e7, 0.1, 1.0)
                             if ch >= full - 0.25:
                                 aim_yaw, aim_pitch = lyaw, lpitch
                             lon = abs(wrap(cy - lyaw)) < tol * 0.8 and abs(cp - lpitch) < tol * 0.8 + 0.01
@@ -769,7 +782,10 @@ class Bot:
                     mv = math.hypot(move[0], move[1])
                     base = math.atan2(move[1], move[0]) if mv > 0.3 else me["aim"][0]
                     self.scan_phase += 0.12
-                    aim_yaw = base + math.sin(self.scan_phase) * 1.0
+                    if now % 9.0 < 1.9:
+                        aim_yaw = me["aim"][0] + 1.3   # full turn: spot loot, crates and hunters all round
+                    else:
+                        aim_yaw = base + math.sin(self.scan_phase) * 1.0
             aim_pitch = 0.0
             # reload when calm
             if gun and gun.get("ammo", 99) < gun["stats"].get("mag", 12) * 0.6 and gun.get("reload", 0) <= 0:
