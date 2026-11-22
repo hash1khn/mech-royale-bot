@@ -80,16 +80,16 @@ class Sim:
         def load(path, name):
             sp = importlib.util.spec_from_file_location(name, path); mod = importlib.util.module_from_spec(sp)
             sys.modules[name] = mod; sp.loader.exec_module(mod); return mod
-        sys.path.insert(0, os.path.join(ROOT, "python"))
+        sys.path.insert(0, ROOT)
         import mechfight as _mf
         _mf.run = lambda *a, **k: None
-        ref = load(os.path.join(ROOT, "python", "bot.py"), "refbot")
+        ref = load(os.path.join(ROOT, "bot.py"), "refbot")
         B = load(os.path.join(botdir, "bot.py"), "testbot")
         hello = json.loads(gzip.open(os.path.join(ROOT, "check", "stream.jsonl.gz"), "rt").readline())
         hello["map"]["dir"] = os.path.join(ROOT, "arena"); hello["slot"] = 0; hello["seed"] = seed
         s.cfg = hello["config"]
         s.bot = B.Bot(hello)
-        s.W = getattr(s.bot, "world", None) if botdir == os.path.join(ROOT, "python") else None
+        s.W = getattr(s.bot, "world", None) if botdir == ROOT else None
         if s.W is None: s.W = ref.World(hello["map"]["dir"])
         s.t = 0.0; s.tick = 0
         z = s.cfg["zone"]; s.zc = list(z["start_center"]); s.zr = z["start_radius"]
@@ -628,7 +628,7 @@ def one(args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bot", default=os.path.join(ROOT, "python")); ap.add_argument("--n", type=int, default=16); ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--bot", default=ROOT); ap.add_argument("--n", type=int, default=16); ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--v", action="store_true"); ap.add_argument("--j", type=int, default=8)
     a = ap.parse_args()
     t0 = time.time()

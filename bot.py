@@ -16,6 +16,9 @@ RANGE_GUN = 100.0     # preferred fighting distance with the gun only
 RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
 SEEK = False          # walk toward the last seen enemy when idle
+SALT = 0              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
+USE_DROPS = True      # walk to supply drops
+CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
 CUBE_R = 150.0         # leave a fight this far to pick up cubes (when healthy)
 
 
@@ -298,7 +301,7 @@ class Bot:
         t0 = time.perf_counter()
         self.cfg = hello["config"]
         self.slot = hello.get("slot", 0)
-        random.seed(hello.get("seed", 0))
+        random.seed(hello.get("seed", 0) + SALT)
         self.world = None
         try:
             self.world = World(hello["map"]["dir"])
@@ -802,7 +805,7 @@ class Bot:
                     away = math.atan2(pos[1] - c0["pos"][1], pos[0] - c0["pos"][0])
                     move = self.steer(pos, [math.cos(away), math.sin(away)])
                 boost = me["energy"] > 10
-            for dr in obs.get("drops", []):
+            for dr in (obs.get("drops", []) if USE_DROPS else []):
                 dd_ = hdist(dr["pos"], pos)
                 if dd_ < 140 and dr.get("lands_in", 99) < dd_ / 11 + 3 and (hpf < 0.7 or me.get("cubes", 0) < 10):
                     move = self.navigate(obs, (dr["pos"][0], dr["pos"][1]), now)
@@ -1035,6 +1038,8 @@ class Bot:
 
         def consider(p, cost, keep=False):
             nonlocal best, bs
+            if CENTER_W:
+                cost += CENTER_W * hdist(p, z["next_center"])
             if not keep and bl and any(hdist(p, q) < 6 and now - tq < 60 for q, tq in bl):
                 return
             if prev is not None and hdist(p, prev) < 6:
@@ -1067,7 +1072,7 @@ class Bot:
         if want_cubes and not obs.get("cubes"):
             for c in self.cube_spots:
                 consider(c, hdist(c, pos) - 90)
-        for dr in obs.get("drops", []):
+        for dr in (obs.get("drops", []) if USE_DROPS else []):
             d = hdist(dr["pos"], pos)
             if d < 340 and dr.get("lands_in", 99) < d / 11 + 10 and (want_cubes or hpf < 0.8):
                 consider(dr["pos"], d - 170, True)
