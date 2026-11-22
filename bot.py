@@ -282,7 +282,7 @@ UPGRADE_PRIORITY = ["armor", "plating", "nanites", "laser_damage", "gun_damage",
                     "lightning_efficiency", "lightning_range", "gyros", "gun_mag", "servos", "gun_velocity",
                     "capacitor", "reactor", "jets", "sensors", "mortar_reload", "lightning_chain",
                     "mortar_velocity", "mortar_splash", "laser_pierce"]
-WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
+WEAPON_RANK = {"lightning": 3, "laser": 2, "mortar": 1, "gun": 0}
 
 
 class Bot:
@@ -443,7 +443,9 @@ class Bot:
         off = obs.get("offer")
         if off and off.get("choices"):
             ids = [c["id"] for c in off["choices"]]
-            best = min(range(len(ids)), key=lambda i: UPGRADE_PRIORITY.index(ids[i]) if ids[i] in UPGRADE_PRIORITY else 99)
+            held = {w["kind"] for w in me.get("weapons", []) if w}
+            pri = (["lightning_efficiency"] if "lightning" in held else []) + (["laser_damage"] if "laser" in held else []) + UPGRADE_PRIORITY
+            best = min(range(len(ids)), key=lambda i: pri.index(ids[i]) if ids[i] in pri else 99)
             act["pick"] = best
 
         # ---- events
@@ -570,16 +572,17 @@ class Bot:
             to_t = math.atan2(tp[1] - pos[1], tp[0] - pos[0])
             d = target["_d"]
             if mode == "fight":
-                want = 30.0 if "lightning" in kinds else (90.0 if ("laser" in kinds) else 65.0)
+                has_l = "lightning" in kinds and me["energy"] > 12
+                want = 26.0 if has_l else (115.0 if ("laser" in kinds) else 65.0)
                 if not target["_los"]:
                     want = 20.0
                 radial = 0.0
-                if d > want + 15:
-                    radial = 1.0
-                elif d < want - 15:
+                if d > want + 12:
+                    radial = 2.0 if has_l else 1.0
+                elif d < want - 12:
                     radial = -0.7
                 if now > self.jink_t:
-                    self.jink_t = now + random.uniform(0.6, 1.4)
+                    self.jink_t = now + random.uniform(0.4, 1.0)
                     self.jink_sign = random.choice((-1, 1))
                 perp = to_t + self.jink_sign * math.pi / 2
                 if not target["_los"]:
@@ -590,7 +593,10 @@ class Bot:
                     my = math.sin(perp) + radial * math.sin(to_t)
                     n = math.hypot(mx, my) or 1
                     move = [mx / n, my / n]
-                boost = me["energy"] > 55 and ("lightning" not in kinds or me["energy"] > 75)
+                if "lightning" in kinds:
+                    boost = d > 50 and me["energy"] > 45 and target["_los"]
+                else:
+                    boost = me["energy"] > 55
             else:  # retreat to cover
                 cov = self.find_cover(obs, pos, [m["pos"] for m in mechs if m["_d"] < 200], now)
                 if cov is not None:
@@ -616,8 +622,10 @@ class Bot:
                 else:
                     goal = tuple(zc)
                 boost = (not in_zone) or (need_dist / walk > time_to_shrink - 5)
-            if hpf >= 0.75 and (goal is None or (not zone_urgent and in_zone)):
+            if goal is None or (not zone_urgent and in_zone):
                 loot_goal = self.loot_goal(obs, pos, kinds, slot1, hpf, now)
+                if hpf < 0.75 and loot_goal is not None and hdist(loot_goal, pos) > 45:
+                    loot_goal = None
                 if loot_goal is not None and (goal is None or self.zone_ok(loot_goal, obs, 5)):
                     goal = loot_goal
             recovering = False
@@ -714,9 +722,13 @@ class Bot:
                     full = ws.get("charge", 0.75)
                     if dist < ws.get("range", 280):
                         if w1.get("cooldown", 0) <= 0.1 or ch > 0:
+                            lyaw, lpitch, _ = self.lead(pos, muzzle, shoot, 1e5)
+                            if ch >= full - 0.25:
+                                aim_yaw, aim_pitch = lyaw, lpitch
+                            lon = abs(wrap(cy - lyaw)) < tol * 0.8 and abs(cp - lpitch) < tol * 0.8 + 0.01
                             if ch < full - 0.05:
                                 f = True  # keep charging
-                            elif not on:
+                            elif not lon:
                                 f = ch < full + ws.get("hold_s", 2) - 0.3  # hold until on target
                             else:
                                 f = False  # release
