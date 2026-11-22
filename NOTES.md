@@ -14,7 +14,8 @@ Python bot for the Builders Mech Royale track (mechfight/1). Entry: `bot.py`, wr
 | v6b | v6a at range 75/110 | 4.84 |
 | v6c | v6b + seek last seen enemy | 4.63 |
 | v6d | v6a, ignore mechs beyond 120 m, range 100/130, cube radius 150 | 5.11 |
-| v7 | v6d + farming director (drone memory, commitment, stand-off, give-up list, travel boost): local cube income +60% | pending |
+| v7 | v6d + farming director (drone memory, commitment, stand-off, give-up list, travel boost): local cube income +60% | 5.44 |
+| v8 | laser is the priority pickup (long walk allowed), laser upgrades first, engage to 210 m with a laser or 10 cubes, stop collecting cubes past 10 (size penalty) | pending |
 
 ## Replay findings (mechanics-v2-16 sample)
 

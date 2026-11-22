@@ -470,7 +470,7 @@ class Bot:
         if off and off.get("choices"):
             ids = [c["id"] for c in off["choices"]]
             held = {w["kind"] for w in me.get("weapons", []) if w}
-            pri = UPGRADE_PRIORITY
+            pri = (["plating", "laser_damage", "armor", "laser_charge"] if "laser" in held else []) + UPGRADE_PRIORITY
             best = min(range(len(ids)), key=lambda i: pri.index(ids[i]) if ids[i] in pri else 99)
             act["pick"] = best
 
@@ -504,7 +504,7 @@ class Bot:
         vis_ids = {p["id"] for p in obs.get("pickups", [])}
         for iid in list(self.items):
             k, ip, t = self.items[iid]
-            if iid not in vis_ids and (hdist(ip, pos) < 25 or now - t > 40):
+            if iid not in vis_ids and (hdist(ip, pos) < 25 or now - t > 150):
                 del self.items[iid]
         for c in obs.get("crates", []):
             self.crates[c["id"]] = (c["pos"], c["hp"], now)
@@ -555,8 +555,10 @@ class Bot:
             yaw_to_me = math.atan2(pos[1] - m["pos"][1], pos[0] - m["pos"][0])
             m["_aimed"] = abs(wrap(m.get("aim", [0, 0])[0] - yaw_to_me)) < 0.25
         recent_attackers = [k for k, t in self.attackers.items() if now - t < 3]
-        if ENGAGE_MAX < 250:
-            mechs = [m for m in mechs if m["_d"] < ENGAGE_MAX or m["id"] in recent_attackers]
+        held_ = {w["kind"] for w in me.get("weapons", []) if w}
+        emax = 210.0 if ("laser" in held_ or me.get("cubes", 0) >= 10) else ENGAGE_MAX
+        if emax < 250:
+            mechs = [m for m in mechs if m["_d"] < emax or m["id"] in recent_attackers]
         visible = [m for m in mechs if m["_los"]]
         if mechs:
             c0 = min(mechs, key=lambda m: m["_d"])
@@ -671,6 +673,8 @@ class Bot:
             # grab cubes lying close by, and hold a landed supply drop, without breaking off the fight
             cube = min(obs.get("cubes", []), key=lambda c: hdist(c["pos"], pos), default=None)
             cube_r = CUBE_R if (hpf > 0.5 and n_threat <= 2 and mode == "fight") else 28.0
+            if me.get("cubes", 0) >= 10:
+                cube_r = 0.0
             if cube is None and self.cube_spots and cube_r > 40:
                 cs = min(self.cube_spots, key=lambda c: hdist(c, pos))
                 cube = {"pos": [cs[0], cs[1], pos[2]]}
@@ -906,27 +910,33 @@ class Bot:
             if W and ip[2] > W.ground(ip[0], ip[1]) + 3:
                 continue  # on a roof
             d = hdist(ip, pos)
-            if d < 220:
+            if k == "laser":
+                consider(ip, d - 230)   # hitscan at any range: worth a long walk
+            elif d < 220:
                 consider(ip, d - 45 * (WEAPON_RANK.get(k, 0) - cur_rank))
-        for c in obs.get("cubes", []):
+        ncubes = obs["self"].get("cubes", 0)
+        want_cubes = ncubes < 10
+        for c in (obs.get("cubes", []) if want_cubes else []):
             cp = c["pos"]
             if W and cp[2] > W.ground(cp[0], cp[1]) + 3 and abs(cp[2] - pos[2]) > 3:
                 continue
             d = hdist(cp, pos)
             if d < 200:
                 consider(cp, d - 70)
-        if not obs.get("cubes"):
+        if want_cubes and not obs.get("cubes"):
             for c in self.cube_spots:
                 consider(c, hdist(c, pos) - 90)
         for dr in obs.get("drops", []):
             d = hdist(dr["pos"], pos)
-            if d < 340 and dr.get("lands_in", 99) < d / 11 + 10:
+            if d < 340 and dr.get("lands_in", 99) < d / 11 + 10 and (want_cubes or hpf < 0.8):
                 consider(dr["pos"], d - 170, True)
+        has_laser = "laser" in kinds
         for cid, (cp, chp, t) in self.crates.items():
             if W and cp[2] > W.ground(cp[0], cp[1]) + 3:
                 continue
-            consider(cp, hdist(cp, pos) - 35)
-        if hpf > 0.6:
+            if want_cubes or not has_laser:   # crates also drop weapons half the time
+                consider(cp, hdist(cp, pos) - 35)
+        if hpf > 0.6 and want_cubes:
             for nid, (np_, t) in self.npc_mem.items():
                 consider(np_, hdist(np_, pos) - 55)
         # give up on a target we have chased for 14 s without getting anything (roof, walled in, bugged)
