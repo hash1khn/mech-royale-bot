@@ -316,6 +316,23 @@ class Sim:
                         o, d = s.muzzle(m)
                         h = s.ray_hit(o, d, ws["range"], m)
                         if h: s.damage(h[0], ws["damage"] * frac, "laser", m, o)
+                        elif m is s.me:
+                            hitc, bt = None, 1e9
+                            for cid, c in s.crates.items():
+                                rx, ry = c["pos"][0] - o[0], c["pos"][1] - o[1]
+                                tp = rx * d[0] + ry * d[1]
+                                if 0 < tp < ws["range"] and tp < bt and math.hypot(o[0] + d[0] * tp - c["pos"][0], o[1] + d[1] * tp - c["pos"][1]) < 1.6 \
+                                        and abs(o[2] + d[2] * tp - c["pos"][2] - 1.5) < 1.9 and s.W.los(o[0], o[1], o[2], c["pos"][0], c["pos"][1], c["pos"][2] + 1.5):
+                                    hitc, bt = cid, tp
+                            if hitc is not None:
+                                c = s.crates[hitc]; c["hp"] -= ws["damage"] * frac * (1 + 0.04 * min(m.cubes, 10))
+                                m.lcr = getattr(m, "lcr", 0) + 1
+                                if c["hp"] <= 0:
+                                    del s.crates[hitc]
+                                    for _ in range(2 if c.get("npc") else 1):
+                                        s.cubes[s.next_cube] = [c["pos"][0] + s.rng.uniform(-1, 1), c["pos"][1] + s.rng.uniform(-1, 1), c["pos"][2]]; s.next_cube += 1
+                                    if not c.get("npc") and s.rng.random() < 0.5:
+                                        s.pickups[s.next_pick] = (s.rng.choice(["mortar", "laser", "lightning"]), list(c["pos"])); s.next_pick += 1
                         m.shots_l = getattr(m, "shots_l", 0) + 1; m.hits_l = getattr(m, "hits_l", 0) + (1 if h else 0)
                         w["charge"] = 0; w["charging"] = False; w["cooldown"] = ws["cooldown"]
                 elif trig and w["cooldown"] <= 0:

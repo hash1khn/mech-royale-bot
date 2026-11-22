@@ -16,7 +16,8 @@ RANGE_GUN = 100.0     # preferred fighting distance with the gun only
 RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
 SEEK = False          # walk toward the last seen enemy when idle
-DUCK = True           # step out of sight of a laser that is charging on us
+DUCK = False          # step out of sight of a laser that is charging on us (v11: scored worse, off)
+LASER_FARM = True     # also use the laser on crates and drones when no hunter is around
 SALT = 0              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
 USE_DROPS = True      # walk to supply drops
 CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
@@ -935,7 +936,7 @@ class Bot:
                         break
         shoot = aim_target or npc_t
         if shoot is None and crate_t is not None:
-            shoot = {"pos": crate_t["pos"], "vel": [0, 0, 0], "kind": "crate"}
+            shoot = {"pos": crate_t["pos"], "vel": [0, 0, 0], "kind": "crate", "hp": crate_t.get("hp", 300)}
         laser_w = next((w for w in weapons if w and w["kind"] == "laser"), None)
         fires = [False, False]
 
@@ -972,8 +973,10 @@ class Bot:
                     if dist < ws.get("range", 45) - 1.5 and abs(wrap(hy - cy)) < cone * 0.5 - 0.05 and me["energy"] >= ws.get("energy", 3):
                         fires[i_] = True
                 elif k == "laser":
-                    if not is_mech or dist > ws.get("range", 280) * 0.97:
+                    if dist > ws.get("range", 280) * 0.97:
                         continue
+                    if not is_mech and not (LASER_FARM and not any(m["_engage"] for m in mechs)):
+                        continue   # keep the laser free while a hunter is about
                     ch = w.get("charge", 0) or 0
                     full = ws.get("charge", 0.75)
                     on = abs(wrap(hy - cy)) < tol_y * 0.9 and abs(hpit - cp) < tol_p
