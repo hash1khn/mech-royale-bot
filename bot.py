@@ -15,9 +15,9 @@ NAME = "steelwit"
 RANGE_GUN = 100.0     # preferred fighting distance with the gun only
 RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
-SEEK = False          # walk toward the last seen enemy when idle
-DUCK = True           # step out of sight of a laser that is charging on us
-SALT = 10              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
+SEEK = True           # walk toward the last seen enemy when idle
+DUCK = False          # step out of sight of a laser that is charging on us
+SALT = 21              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
 USE_DROPS = True      # walk to supply drops
 CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
 CUBE_R = 150.0         # leave a fight this far to pick up cubes (when healthy)
@@ -293,6 +293,7 @@ UPGRADE_PRIORITY = ["plating", "armor", "laser_damage", "laser_charge", "nanites
                     "lightning_chain", "reactor", "capacitor", "mortar_reload", "mortar_splash", "mortar_velocity",
                     "sensors", "jets", "laser_pierce"]
 LIGHTNING_FIRST = False  # rank lightning above laser
+HIDE = False             # hide behind cover to regen when hurt (hunters share sightings: off)
 CUBE_CAP = 10            # stop farming cubes past this (stat cap is 10; upgrades continue at 15, 21)
 WEAPON_RANK = {"lightning": 3, "laser": 2, "mortar": 1, "gun": 0} if LIGHTNING_FIRST else {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
 
@@ -721,7 +722,12 @@ class Bot:
         if mechs:
             c0 = min(mechs, key=lambda m: m["_d"])
             self.last_enemy = (c0["pos"][0], c0["pos"][1], c0["pos"][2], now)
-        near = sum(1 for m in mechs if m["_d"] < 160)
+        # hunt: healthy and nobody is on us -> open on the closest mech in sight inside 130 m
+        if SEEK and hpf > 0.65 and not late and not any(m["_engage"] for m in mechs):
+            h_ = min((m for m in mechs if m["_los"] and m["_d"] < 130), key=lambda m: m["_d"], default=None)
+            if h_ is not None:
+                h_["_engage"] = True
+        near = sum(1 for m in mechs if m["_d"] < 160 and (m["_engage"] or m["_hit"] < 6 or m["_aimed"] or m["_d"] < 60))
         n_threat = near
 
         # target: engaged and in sight; stick with the current one, prefer nearly dead ones
@@ -854,7 +860,7 @@ class Bot:
                         if dg < 30 and (self.world is None or self.world.los(pos[0], pos[1], pos[2] + muzzle, goal[0], goal[1], self.world.ground(goal[0], goal[1]) + 1.5)):
                             goal = (pos[0], pos[1]) if dg > 14 else (pos[0] + (pos[0] - goal[0]), pos[1] + (pos[1] - goal[1]))
             recovering = False
-            if goal is None and hpf < 0.5 and not zone_urgent and not visible:
+            if HIDE and goal is None and hpf < 0.5 and not zone_urgent and not visible:
                 recovering = True
                 cube = min(obs.get("cubes", []), key=lambda c: hdist(c["pos"], pos), default=None)
                 if cube is not None and hdist(cube["pos"], pos) < 40:
@@ -868,8 +874,11 @@ class Bot:
                     if goal is None:
                         goal = (pos[0], pos[1])
             self.recovering = recovering
-            if goal is None and SEEK and hpf > 0.7 and self.last_enemy is not None and now - self.last_enemy[3] < 40 \
-                    and hdist(self.last_enemy, pos) > 60 and self.zone_ok(self.last_enemy, obs, 5):
+            far_loot = goal is None or (not zone_urgent and not outside_next and hdist(goal, pos) > 100
+                                        and not any(hdist(dr["pos"], goal) < 2 for dr in obs.get("drops", []))
+                                        and not any(k_ == "laser" and hdist(ip_, goal) < 2 for k_, ip_, _t in self.items.values()))
+            if SEEK and far_loot and not zone_urgent and hpf > 0.65 and self.last_enemy is not None and now - self.last_enemy[3] < 45 \
+                    and 50 < hdist(self.last_enemy, pos) < 320 and self.zone_ok(self.last_enemy, obs, 5):
                 goal = (self.last_enemy[0], self.last_enemy[1])
             if goal is None:
                 # roam: stay well inside next circle
