@@ -17,7 +17,7 @@ RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
 SEEK = False          # walk toward the last seen enemy when idle
 DUCK = True           # step out of sight of a laser that is charging on us
-SALT = 9              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
+SALT = 10              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
 USE_DROPS = True      # walk to supply drops
 CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
 CUBE_R = 150.0         # leave a fight this far to pick up cubes (when healthy)
@@ -336,6 +336,7 @@ class Bot:
         self.last_pos = None
         self.taken_fail = {}
         self.stick_id = -1; self.stick_t = -99.0; self.lose_t = -99.0
+        self.mech_hit_t = -99.0; self.mech_bearing = 0.0
         self.laser_hold = None; self.npc_hurt_t = -99.0; self.recovering = False
         self.npc_mem = {}     # id -> (pos, t)
         self.farm_bl = []; self.farm_since = 0.0; self.farm_cubes = 0; self.farm_goal = None
@@ -626,6 +627,9 @@ class Bot:
             if et == "damaged":
                 if ev.get("weapon") == "npc":
                     self.npc_hurt_t = now
+                if ev.get("by") is not None and ev["by"] < 16 and ev.get("bearing") is not None:
+                    self.mech_hit_t = now
+                    self.mech_bearing = ev["bearing"]
                 if ev.get("by") is not None:
                     self.last_dmg_t = now
                     self.attackers[ev["by"]] = now
@@ -754,9 +758,9 @@ class Bot:
                 losing = True
             if tgt_hpf < 0.25 and hpf > 0.2 and near <= 2:
                 losing = False
-        if losing:
+        if losing and now - self.lose_t >= 3.0:
             self.lose_t = now
-        retreat = now - self.lose_t < 1.5
+        retreat = losing and now - self.lose_t < 1.5
         finishing = target is not None and target["_d"] < 120 and (target.get("hp", 1400) < 200 or target.get("hp", 1400) < hp * 0.5)
         crowd = sum(1 for m in mechs if m["_engage"] or (m["_los"] and m["_d"] < 150))
         mode = "roam"
@@ -924,7 +928,7 @@ class Bot:
         npc_t = None
         crate_t = None
         npc_hurt = now - self.npc_hurt_t < 3
-        if aim_target is None and mode != "retreat":
+        if aim_target is None and mode != "retreat" and now - self.mech_hit_t > 2.5:
             if npcs and (hpf > 0.5 or npc_hurt):
                 cands = [n for n in npcs if hdist(n["pos"], pos) < 150 and self.los_mech(pos, muzzle, n)]
                 if cands:
@@ -1010,6 +1014,8 @@ class Bot:
                 watch = min((m for m in mechs if m["_engage"] or m["_hit"] < 6), key=lambda m: m["_d"], default=None)
                 if watch is not None:
                     aim_yaw = math.atan2(watch["pos"][1] - pos[1], watch["pos"][0] - pos[0])
+                elif now - self.mech_hit_t < 2.5:
+                    aim_yaw = self.mech_bearing
                 elif self.threat_bearing is not None and now - self.threat_t < 2.5:
                     aim_yaw = self.threat_bearing
                 else:
