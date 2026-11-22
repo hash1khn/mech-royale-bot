@@ -315,6 +315,7 @@ class Bot:
         self.attackers = {}  # id -> t
         self.cover = None
         self.cover_t = -99
+        self.last_enemy = None  # (x, y, z, t)
         self.mode = "roam"
         self.scan_phase = 0.0
         self.roam_goal = None
@@ -436,6 +437,7 @@ class Bot:
         muzzle = st.get("muzzle_height", 7.0)
         turn = st.get("turn_rate", 4.0)
         act = {"tick": obs["tick"]}
+        self.recovering = False
 
         # ---- upgrades
         off = obs.get("offer")
@@ -509,6 +511,9 @@ class Bot:
             yaw_to_me = math.atan2(pos[1] - m["pos"][1], pos[0] - m["pos"][0])
             m["_aimed"] = abs(wrap(m.get("aim", [0, 0])[0] - yaw_to_me)) < 0.25
         visible = [m for m in mechs if m["_los"]]
+        if mechs:
+            c0 = min(mechs, key=lambda m: m["_d"])
+            self.last_enemy = (c0["pos"][0], c0["pos"][1], c0["pos"][2], now)
         threats = [m for m in mechs if m["_d"] < 160 and (m["_los"] or m["_aimed"])]
         recent_attackers = [k for k, t in self.attackers.items() if now - t < 3]
         n_threat = max(len([m for m in threats if m["_aimed"] or m["id"] in recent_attackers]), len(recent_attackers))
@@ -587,7 +592,7 @@ class Bot:
                     move = [mx / n, my / n]
                 boost = me["energy"] > 55 and ("lightning" not in kinds or me["energy"] > 75)
             else:  # retreat to cover
-                cov = self.find_cover(obs, pos, [m for m in mechs if m["_d"] < 200], now)
+                cov = self.find_cover(obs, pos, [m["pos"] for m in mechs if m["_d"] < 200], now)
                 if cov is not None:
                     move = self.navigate(obs, cov, now)
                 else:
@@ -611,10 +616,25 @@ class Bot:
                 else:
                     goal = tuple(zc)
                 boost = (not in_zone) or (need_dist / walk > time_to_shrink - 5)
-            if goal is None or (not zone_urgent and not (not in_zone)):
+            if hpf >= 0.75 and (goal is None or (not zone_urgent and in_zone)):
                 loot_goal = self.loot_goal(obs, pos, kinds, slot1, hpf, now)
                 if loot_goal is not None and (goal is None or self.zone_ok(loot_goal, obs, 5)):
                     goal = loot_goal
+            recovering = False
+            if goal is None and hpf < 0.75 and not zone_urgent and not visible:
+                recovering = True
+                cube = min(obs.get("cubes", []), key=lambda c: hdist(c["pos"], pos), default=None)
+                if cube is not None and hdist(cube["pos"], pos) < 40:
+                    goal = (cube["pos"][0], cube["pos"][1])
+                else:
+                    le = self.last_enemy
+                    if le is not None and now - le[3] < 60:
+                        cov = self.find_cover(obs, pos, [le], now)
+                        if cov is not None and hdist(cov, pos) > 3:
+                            goal = cov
+                    if goal is None:
+                        goal = (pos[0], pos[1])
+            self.recovering = recovering
             if goal is None:
                 # roam: stay well inside next circle
                 if self.roam_goal is None or now > self.roam_t or not self.zone_ok(self.roam_goal, obs, 20):
@@ -657,11 +677,11 @@ class Bot:
         crate_t = None
         if aim_target is None:
             # shoot NPC drones / crates when calm and healthy
-            if npcs and hpf > 0.5 and not mechs:
+            if npcs and hpf > 0.75 and not mechs:
                 cands = [n for n in npcs if hdist(n["pos"], pos) < 90 and self.los_mech(pos, muzzle, n)]
                 if cands:
                     npc_t = min(cands, key=lambda n: hdist(n["pos"], pos))
-            if npc_t is None and not mechs:
+            if npc_t is None and not mechs and hpf > 0.7:
                 cands = [c for c in obs.get("crates", []) if hdist(c["pos"], pos) < 80]
                 for c in sorted(cands, key=lambda c: hdist(c["pos"], pos)):
                     if self.world is None or self.world.los(pos[0], pos[1], pos[2] + muzzle, c["pos"][0], c["pos"][1], c["pos"][2] + 1.2):
@@ -725,6 +745,9 @@ class Bot:
                 aim_yaw = self.threat_bearing
             elif target is not None:
                 aim_yaw = math.atan2(target["pos"][1] - pos[1], target["pos"][0] - pos[0])
+            elif self.recovering and self.last_enemy is not None:
+                le = self.last_enemy
+                aim_yaw = math.atan2(le[1] - pos[1], le[0] - pos[0]) + math.sin(now * 0.8) * 0.5
             else:
                 snd = [s for s in obs.get("sounds", []) if s["kind"] in ("gun", "laser", "laser_charge", "lightning", "step", "boost", "jet", "mortar")]
                 if snd:
@@ -806,14 +829,13 @@ class Bot:
                     continue
                 g = W.ground(x, y)
                 hidden = True
-                for m in threats[:3]:
-                    mp = m["pos"]
+                for mp in threats[:3]:
                     if W.los(mp[0], mp[1], mp[2] + 8, x, y, g + 4.5):
                         hidden = False
                         break
                 if hidden:
                     # prefer away from threats
-                    tm = threats[0]["pos"]
+                    tm = threats[0]
                     s = r - 0.3 * hdist((x, y), tm)
                     if s < bd:
                         bd, best = s, (x, y)
