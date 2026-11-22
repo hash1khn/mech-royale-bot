@@ -1,0 +1,8 @@
+.git
+arena/
+check/
+tools/
+python/
+*.md
+*.jsonl.gz
+.gobuild/

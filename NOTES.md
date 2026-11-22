@@ -1,6 +1,16 @@
 # Mech Royale bot
 
-Python bot for the Builders Mech Royale track (mechfight/1). Entry: `bot.py`, wrapper: `mechfight.py` (from the kit).
+Bot for the Builders Mech Royale track (mechfight/1).
+
+**Since g1 the submitted bot is the Go bot** in `cmd/bot` + `mech/`, built by the top-level `Dockerfile`.
+
+## Credit
+
+The Go bot is giddygiddyboy's public Mech Royale bot with waihu's modifications, used under the MIT licence (`LICENSE-giddy`).
+Imported from https://github.com/waiprotein/mech-royale-bot at commit `fea5742`. Our changes are the commits after the import.
+
+Our own Python bot (best 5.64, v9) is kept in `python/` with its Dockerfile; to go back, restore the repo to tag `v9`.
+Local Go build: `tools/gobuild.sh` (outputs `.gobuild/mechbot-mac` and the `mech-royale-go` test image).
 
 ## Score log
 
@@ -16,7 +26,8 @@ Python bot for the Builders Mech Royale track (mechfight/1). Entry: `bot.py`, wr
 | v6d | v6a, ignore mechs beyond 120 m, range 100/130, cube radius 150 | 5.11 |
 | v7 | v6d + farming director (drone memory, commitment, stand-off, give-up list, travel boost): local cube income +60% | 5.44 |
 | v8 | laser is the priority pickup (long walk allowed), laser upgrades first, engage to 210 m with a laser or 10 cubes, stop collecting cubes past 10 (size penalty) | 5.39 |
-| v9 | fight logic reworked after studying the public top bots: engage only hunters (close, closing, aiming, shooting, weak), sticky target, 1.5 s losing pulses instead of hiding, finish-rush, 16-point position sampler (range, line of fire, exposure to others), dodge bullets/shells/charging lasers, laser lethal release and hold through LOS flicker, tight gun gating, no mortar, farm above 50% HP | pending |
+| v9 | fight logic reworked after studying the public top bots: engage only hunters (close, closing, aiming, shooting, weak), sticky target, 1.5 s losing pulses instead of hiding, finish-rush, 16-point position sampler (range, line of fire, exposure to others), dodge bullets/shells/charging lasers, laser lethal release and hold through LOS flicker, tight gun gating, no mortar, farm above 50% HP | 5.64 |
+| g1 | switched base to the public giddygiddyboy Go bot (tuned copy from waiprotein/mech-royale-bot @ fea5742, MIT); only the bot name changed | pending |
 
 ## Replay findings (mechanics-v2-16 sample)
 
