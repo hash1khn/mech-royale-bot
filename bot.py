@@ -17,7 +17,7 @@ RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
 SEEK = True           # walk toward the last seen enemy when idle
 DUCK = False          # step out of sight of a laser that is charging on us
-SALT = 26              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
+SALT = 41              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
 USE_DROPS = True      # walk to supply drops
 CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
 CUBE_R = 150.0         # leave a fight this far to pick up cubes (when healthy)
@@ -294,6 +294,9 @@ UPGRADE_PRIORITY = ["plating", "armor", "laser_damage", "laser_charge", "nanites
                     "sensors", "jets", "laser_pierce"]
 LIGHTNING_FIRST = False  # rank lightning above laser
 HIDE = False             # hide behind cover to regen when hurt (hunters share sightings: off)
+REAR_W = 25.0            # extra cost per other mech that would be behind us at a spot (rear hits x1.5)
+KILL_FOCUS = 150.0       # extra stick bonus scaled by how hurt the current target is
+CUBE_SMART = True        # price cube piles by size and by reaching the next upgrade threshold
 CUBE_CAP = 15            # stop farming cubes past this (stat cap is 10; upgrades continue at 15, 21)
 WEAPON_RANK = {"lightning": 3, "laser": 2, "mortar": 1, "gun": 0} if LIGHTNING_FIRST else {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
 
@@ -453,7 +456,7 @@ class Bot:
             return self.steer(pos, [sx, sy])
         tsc = 1 + 0.05 * tg.get("cubes", 0)
         tcx, tcy, tcz = tg["pos"][0], tg["pos"][1], tg["pos"][2] + 4.5 * tsc
-        others = [m for m in mechs if m is not tg][:3]
+        others = sorted((m for m in mechs if m is not tg and m["_d"] < 170), key=lambda m: m["_d"])[:3]
         zc, zr = self.zone_goal(obs)
         zlim = max(zr - 10.0, zr * 0.6)
         best, mx, my = -1e18, 0.0, 0.0
@@ -480,6 +483,8 @@ class Bot:
                 ep = e["pos"]
                 if math.hypot(ep[0] - cx, ep[1] - cy) <= 170 and W.los(ep[0], ep[1], ep[2] + 8.0, cx, cy, cz + 5.4):
                     s -= 60 if (want_los < -1 and e.get("charging")) else 30
+                    if REAR_W and (ep[0] - cx) * (tcx - cx) + (ep[1] - cy) * (tcy - cy) < 0:
+                        s -= REAR_W   # it would hit our back while we face the target
             ex = math.hypot(cx - zc[0], cy - zc[1]) - zlim
             if ex > 0:
                 s -= 2.0 * ex
@@ -744,7 +749,7 @@ class Bot:
             if hp_ <= 0.3 * mhp_:
                 sc_ -= 100
             if m["id"] == self.stick_id and now - self.stick_t < 2:
-                sc_ -= 120
+                sc_ -= 120 + KILL_FOCUS * (1 - hp_ / mhp_)
             if m["_hit"] < 4:
                 sc_ -= 40
             if m["_closing"] > 3:
@@ -1089,13 +1094,21 @@ class Bot:
                 consider(ip, d - 45 * (WEAPON_RANK.get(k, 0) - cur_rank))
         ncubes = obs["self"].get("cubes", 0)
         want_cubes = ncubes < CUBE_CAP
-        for c in (obs.get("cubes", []) if want_cubes else []):
+        vis_cubes = obs.get("cubes", []) if want_cubes else []
+        nxt = next((t_ for t_ in self.cfg.get("cubes", {}).get("upgrade_thresholds", []) if t_ > ncubes), None)
+        for c in vis_cubes:
             cp = c["pos"]
             if W and cp[2] > W.ground(cp[0], cp[1]) + 3 and abs(cp[2] - pos[2]) > 3:
                 continue
             d = hdist(cp, pos)
             if d < 200:
-                consider(cp, d - 70)
+                bonus = 0.0
+                if CUBE_SMART:
+                    pile = sum(1 for o in vis_cubes if hdist(o["pos"], cp) < 10)
+                    bonus = 25.0 * (pile - 1)
+                    if nxt is not None and ncubes + pile >= nxt:
+                        bonus += 30.0   # this pile buys an upgrade
+                consider(cp, d - 70 - bonus)
         if want_cubes and not obs.get("cubes"):
             for c in self.cube_spots:
                 consider(c, hdist(c, pos) - 90)
