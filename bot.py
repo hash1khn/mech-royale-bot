@@ -17,7 +17,7 @@ RANGE_LASER = 130.0   # ... holding a laser
 ENGAGE_MAX = 120.0    # ignore mechs farther than this unless they are shooting us
 SEEK = True           # walk toward the last seen enemy when idle
 DUCK = False          # step out of sight of a laser that is charging on us
-SALT = 25              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
+SALT = 26              # RNG offset: the scorer is deterministic per commit, this re-rolls the matches
 USE_DROPS = True      # walk to supply drops
 CENTER_W = 0.0        # farming bias toward the next zone centre (cost per metre from it)
 CUBE_R = 150.0         # leave a fight this far to pick up cubes (when healthy)
@@ -294,7 +294,7 @@ UPGRADE_PRIORITY = ["plating", "armor", "laser_damage", "laser_charge", "nanites
                     "sensors", "jets", "laser_pierce"]
 LIGHTNING_FIRST = False  # rank lightning above laser
 HIDE = False             # hide behind cover to regen when hurt (hunters share sightings: off)
-CUBE_CAP = 10            # stop farming cubes past this (stat cap is 10; upgrades continue at 15, 21)
+CUBE_CAP = 15            # stop farming cubes past this (stat cap is 10; upgrades continue at 15, 21)
 WEAPON_RANK = {"lightning": 3, "laser": 2, "mortar": 1, "gun": 0} if LIGHTNING_FIRST else {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
 
 
