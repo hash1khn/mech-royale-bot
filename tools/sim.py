@@ -129,6 +129,7 @@ class Sim:
         for _ in range(27):
             p = s.free_point(s.zc, s.zr * 0.9)
             s.crates[cid] = dict(pos=[p[0], p[1], s.W.ground(*p)], hp=300.0); cid += 1
+        s.drops = []; s.drop_i = 0; s.drops_taken = 0
         s.seen = {}  # id -> last seen t
         s.enemy_knows = -99; s.last_known = None
         s.log = dict(stuck=0.0, death=None, first_w=None, modes={})
@@ -492,7 +493,9 @@ class Sim:
                    crates=[dict(id=i, pos=c["pos"], hp=c["hp"]) for i, c in s.crates.items() if hd(c["pos"], me.pos) < 200 and s.sees(me, c["pos"], 2.4)],
                    cubes=[dict(id=i, pos=p) for i, p in s.cubes.items() if hd(p, me.pos) < 200 and s.sees(me, p, 1.0)],
                    pickups=[dict(id=i, kind=k, pos=p) for i, (k, p) in s.pickups.items() if hd(p, me.pos) < 200 and s.sees(me, p, 1.0)],
-                   sounds=[], beams=[], events=me.events, drops=[], zone=zone, offer=me.offer)
+                   sounds=[], beams=[], events=me.events,
+                   drops=[dict(id=d["id"], pos=d["pos"], radius=8, lands_in=round(max(0.0, d["land"] - s.t), 2), capture_s=4, progress=round(d["prog"], 2), holder=None) for d in s.drops],
+                   zone=zone, offer=me.offer)
         me.events = []
         return obs
 
@@ -560,6 +563,20 @@ class Sim:
                 if not m.alive: continue
                 s.step_mech(m); s.weapons_step(m)
             s.proj_step()
+            dc = cfg["drops"]
+            if s.drop_i < len(dc["times"]) and s.t >= dc["times"][s.drop_i]:
+                p = s.free_point(zone["next_center"], zone["next_radius"] * dc["spread"])
+                s.drops.append(dict(id=20000 + s.drop_i, pos=[p[0], p[1], s.W.ground(*p)], land=s.t + dc["fall_s"], prog=0.0)); s.drop_i += 1
+            for d in list(s.drops):
+                if s.t < d["land"]: continue
+                inside = [m for m in s.mechs if m.alive and hd(m.pos, d["pos"]) <= 8]
+                if len(inside) == 1 and inside[0] is me:
+                    d["prog"] += DT
+                    if d["prog"] >= dc["capture_s"]:
+                        me.cubes += dc["cubes"]; me.recompute(cfg); me.hp = me.max_hp; me.energy = me.st["energy"]
+                        me.events.append(dict(type="drop", id=d["id"], cubes=me.cubes)); s.drops.remove(d); s.drops_taken += 1
+                elif len(inside) != 1 or inside[0] is not me:
+                    if not inside or len(inside) == 1: d["prog"] = 0.0
             zc, zr = zone["center"], zone["radius"]
             for m in s.mechs:
                 if not m.alive: continue
@@ -584,7 +601,7 @@ class Sim:
             place = 1 + sum(1 for m in s.mechs[1:] if m.alive and m.hp > me.hp)
         return dict(seed=s.seed, score=16 - place, kills=s.kills, t=round(s.t, 1), last=s.last_hit if not me.alive else None,
                     hunters=len(s.hunters()), dealt=round(me.dealt), taken={k: round(v) for k, v in me.taken.items()}, zone=round(me.zone_dmg),
-                    stuck=round(s.log["stuck"], 1), first_w=s.log["first_w"], loadout=[w["kind"] for w in me.weapons if w], cubes=me.cubes,
+                    stuck=round(s.log["stuck"], 1), first_w=s.log["first_w"], loadout=[w["kind"] for w in me.weapons if w], cubes=me.cubes, drops=s.drops_taken,
                     ups=me.ups, modes=s.log["modes"], gun=(getattr(me, "ghits", 0)), laser=(getattr(me, "hits_l", 0), getattr(me, "shots_l", 0)), exc=s.log.get("exc"))
 
 
@@ -617,4 +634,4 @@ if __name__ == "__main__":
     for r in res:
         k = (r["last"][0] if r["last"] else "survived"); causes[k] = causes.get(k, 0) + 1
     print(f"\nMEAN score {sum(r['score'] for r in res)/n:.2f}  kills {sum(r['kills'] for r in res)/n:.2f}  death_t {sum(r['t'] for r in res)/n:.0f}s  "
-          f"zone_dmg {sum(r['zone'] for r in res)/n:.0f}  stuck {sum(r['stuck'] for r in res)/n:.1f}s  causes {causes}  ({time.time()-t0:.0f}s)")
+          f"cubes {sum(r['cubes'] for r in res)/n:.1f} drops {sum(r['drops'] for r in res)/n:.2f} zone_dmg {sum(r['zone'] for r in res)/n:.0f}  stuck {sum(r['stuck'] for r in res)/n:.1f}s  causes {causes}  ({time.time()-t0:.0f}s)")

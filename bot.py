@@ -11,6 +11,12 @@ import mechfight as mf
 
 TAU = 2 * math.pi
 NAME = "steelwit"
+# strategy knobs (variants are A/B tested with real submissions)
+RANGE_GUN = 140.0     # preferred fighting distance with the gun only
+RANGE_LASER = 150.0   # ... holding a laser
+ENGAGE_MAX = 260.0    # ignore mechs farther than this unless they are shooting us
+SEEK = False          # walk toward the last seen enemy when idle
+CUBE_R = 60.0         # leave a fight this far to pick up cubes (when healthy)
 
 
 def wrap(a):
@@ -537,12 +543,14 @@ class Bot:
             # is it pointing at us?
             yaw_to_me = math.atan2(pos[1] - m["pos"][1], pos[0] - m["pos"][0])
             m["_aimed"] = abs(wrap(m.get("aim", [0, 0])[0] - yaw_to_me)) < 0.25
+        recent_attackers = [k for k, t in self.attackers.items() if now - t < 3]
+        if ENGAGE_MAX < 250:
+            mechs = [m for m in mechs if m["_d"] < ENGAGE_MAX or m["id"] in recent_attackers]
         visible = [m for m in mechs if m["_los"]]
         if mechs:
             c0 = min(mechs, key=lambda m: m["_d"])
             self.last_enemy = (c0["pos"][0], c0["pos"][1], c0["pos"][2], now)
         threats = [m for m in mechs if m["_d"] < 160 and (m["_los"] or m["_aimed"])]
-        recent_attackers = [k for k, t in self.attackers.items() if now - t < 3]
         n_threat = max(len([m for m in threats if m["_aimed"] or m["id"] in recent_attackers]), len(recent_attackers))
 
         # target selection: visible, prefer low hp and close
@@ -598,7 +606,7 @@ class Bot:
             d = target["_d"]
             if mode == "fight":
                 has_l = "lightning" in kinds and me["energy"] > 25 and n_threat <= 1 and d < 70
-                want = 26.0 if has_l else (150.0 if ("laser" in kinds) else 140.0)
+                want = 26.0 if has_l else (RANGE_LASER if ("laser" in kinds) else RANGE_GUN)
                 radial = 0.0
                 if has_l:
                     if d > want + 12:
@@ -649,6 +657,20 @@ class Bot:
                         self.jink_t = now + random.uniform(0.6, 1.2)
                         self.jink_sign = -self.jink_sign
                 boost = me["energy"] > 20
+            # grab cubes lying close by, and hold a landed supply drop, without breaking off the fight
+            cube = min(obs.get("cubes", []), key=lambda c: hdist(c["pos"], pos), default=None)
+            cube_r = CUBE_R if (hpf > 0.5 and n_threat <= 2 and mode == "fight") else 28.0
+            if cube is None and self.cube_spots and cube_r > 40:
+                cs = min(self.cube_spots, key=lambda c: hdist(c, pos))
+                cube = {"pos": [cs[0], cs[1], pos[2]]}
+            if cube is not None and hdist(cube["pos"], pos) < cube_r:
+                move = self.navigate(obs, (cube["pos"][0], cube["pos"][1]), now)
+            for dr in obs.get("drops", []):
+                dd_ = hdist(dr["pos"], pos)
+                if dd_ < 140 and dr.get("lands_in", 99) < dd_ / 11 + 3:
+                    move = self.navigate(obs, (dr["pos"][0], dr["pos"][1]), now)
+                    boost = boost or (dd_ > 20 and me["energy"] > 30)
+                    break
             # keep inside zone while fighting
             if outside_next and dz_center > zr * 0.9:
                 zx, zy = (zc[0] - pos[0]) / dz_center, (zc[1] - pos[1]) / dz_center
@@ -665,7 +687,8 @@ class Bot:
                 boost = (not in_zone) or (need_dist / walk > time_to_shrink - 5)
             if goal is None or (not zone_urgent and in_zone):
                 loot_goal = self.loot_goal(obs, pos, kinds, slot1, hpf, now)
-                if hpf < 0.75 and loot_goal is not None and hdist(loot_goal, pos) > 45:
+                if hpf < 0.75 and loot_goal is not None and hdist(loot_goal, pos) > 45 and not any(
+                        hdist(dr["pos"], loot_goal) < 1 for dr in obs.get("drops", [])):
                     loot_goal = None
                 if loot_goal is not None and (goal is None or self.zone_ok(loot_goal, obs, 5)):
                     goal = loot_goal
@@ -684,6 +707,9 @@ class Bot:
                     if goal is None:
                         goal = (pos[0], pos[1])
             self.recovering = recovering
+            if goal is None and SEEK and hpf > 0.7 and self.last_enemy is not None and now - self.last_enemy[3] < 40 \
+                    and hdist(self.last_enemy, pos) > 60 and self.zone_ok(self.last_enemy, obs, 5):
+                goal = (self.last_enemy[0], self.last_enemy[1])
             if goal is None:
                 # roam: stay well inside next circle
                 if self.roam_goal is None or now > self.roam_t or not self.zone_ok(self.roam_goal, obs, 20):
@@ -726,12 +752,12 @@ class Bot:
         crate_t = None
         if aim_target is None:
             # shoot NPC drones / crates when calm and healthy
-            if npcs and hpf > 0.75 and not mechs:
+            if npcs and hpf > 0.6:
                 cands = [n for n in npcs if hdist(n["pos"], pos) < 90 and self.los_mech(pos, muzzle, n)]
                 if cands:
                     npc_t = min(cands, key=lambda n: hdist(n["pos"], pos))
-            if npc_t is None and not mechs and hpf > 0.7:
-                cands = [c for c in obs.get("crates", []) if hdist(c["pos"], pos) < 80]
+            if npc_t is None:
+                cands = [c for c in obs.get("crates", []) if hdist(c["pos"], pos) < 110]
                 for c in sorted(cands, key=lambda c: hdist(c["pos"], pos)):
                     if self.world is None or self.world.los(pos[0], pos[1], pos[2] + muzzle, c["pos"][0], c["pos"][1], c["pos"][2] + 1.2):
                         crate_t = c
@@ -859,9 +885,9 @@ class Bot:
         # supply drop
         for dr in obs.get("drops", []):
             d = hdist(dr["pos"], pos)
-            if d < 200 and dr.get("lands_in", 99) < d / 12 + 2 and hpf > 0.4:
-                if d - 50 < bs:
-                    bs, best = d - 50, (dr["pos"][0], dr["pos"][1])
+            if d < 320 and dr.get("lands_in", 99) < d / 11 + 8:
+                if d - 150 < bs:
+                    bs, best = d - 150, (dr["pos"][0], dr["pos"][1])
         # crates: approach to shooting range
         if best is None or bs > 40:
             for cid, (cp, chp, t) in self.crates.items():
