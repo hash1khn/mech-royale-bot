@@ -9,7 +9,12 @@ Python bot for the Builders Mech Royale track (mechfight/1). Entry: `bot.py`, wr
 | v1 (f614445) | map + zone + lead-aim duels + retreat + loot | 3.60 |
 | v3 (0be1ff6) | recover mode, lightning close-in, direct laser aim | 3.93 |
 | v4 | kite at ~140 m (house bots hit ~15% past 120 m, ~80% under 80 m), latency-aware lead, laser > lightning, gun upgrades, 360 scan | 4.09 |
-| v5 | steer around walls while kiting, remember kill sites for cubes, fetch a nearby laser mid-fight (sim: 4.5 -> 5.9) | pending |
+| v5 | steer around walls while kiting, remember kill sites for cubes, fetch a nearby laser mid-fight (sim: 4.5 -> 5.9) | 4.24 |
+| v6a | farming: crates/drones for cubes, supply drops, cube pickup mid-fight; range 140 | 5.00 |
+| v6b | v6a at range 75/110 | 4.84 |
+| v6c | v6b + seek last seen enemy | 4.63 |
+| v6d | v6a, ignore mechs beyond 120 m, range 100/130, cube radius 150 | 5.11 |
+| v7 | v6d + farming director (drone memory, commitment, stand-off, give-up list, travel boost): local cube income +60% | pending |
 
 ## Replay findings (mechanics-v2-16 sample)
 

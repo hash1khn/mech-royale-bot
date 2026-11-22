@@ -329,6 +329,9 @@ class Bot:
         self.npc_target = None
         self.last_pos = None
         self.taken_fail = {}
+        self.npc_mem = {}     # id -> (pos, t)
+        self.farm_bl = []; self.farm_since = 0.0; self.farm_cubes = 0; self.farm_goal = None
+        self.boosting = False
         self.cube_spots = []  # (x, y, t) where a mech we killed fell
         self.last_seen = {}   # id -> pos
 
@@ -508,8 +511,16 @@ class Bot:
         vis_c = {c["id"] for c in obs.get("crates", [])}
         for cid in list(self.crates):
             cp, _, t = self.crates[cid]
-            if cid not in vis_c and (hdist(cp, pos) < 30 or now - t > 40):
+            if cid not in vis_c and (hdist(cp, pos) < 35 or now - t > 150):
                 del self.crates[cid]
+        vis_n = set()
+        for n_ in obs.get("mechs", []):
+            if n_.get("kind") == "npc":
+                self.npc_mem[n_["id"]] = (n_["pos"], now); vis_n.add(n_["id"])
+        for nid in list(self.npc_mem):
+            np_, t = self.npc_mem[nid]
+            if nid not in vis_n and (hdist(np_, pos) < 40 or now - t > 120):
+                del self.npc_mem[nid]
 
         weapons = me.get("weapons", [None, None])
         gun = weapons[0] if weapons and weapons[0] and weapons[0]["kind"] == "gun" else None
@@ -692,6 +703,11 @@ class Bot:
                     loot_goal = None
                 if loot_goal is not None and (goal is None or self.zone_ok(loot_goal, obs, 5)):
                     goal = loot_goal
+                    shootable = [c_[0] for c_ in self.crates.values()] + [n_[0] for n_ in self.npc_mem.values()]
+                    if any(hdist(q, goal) < 3 for q in shootable):
+                        dg = hdist(goal, pos)
+                        if dg < 30 and (self.world is None or self.world.los(pos[0], pos[1], pos[2] + muzzle, goal[0], goal[1], self.world.ground(goal[0], goal[1]) + 1.5)):
+                            goal = (pos[0], pos[1]) if dg > 14 else (pos[0] + (pos[0] - goal[0]), pos[1] + (pos[1] - goal[1]))
             recovering = False
             if goal is None and hpf < 0.75 and not zone_urgent and not visible:
                 recovering = True
@@ -721,8 +737,13 @@ class Bot:
                 if hdist(pos, goal) < 8:
                     self.roam_t = now
             move = self.navigate(obs, goal, now)
-            if not boost and me["energy"] > 90 and hdist(pos, goal) > 60:
-                boost = True
+            if not boost and not recovering:
+                if me["energy"] > 85:
+                    self.boosting = True
+                elif me["energy"] < 35:
+                    self.boosting = False
+                if self.boosting and hdist(pos, goal) > 25 and "lightning" not in kinds:
+                    boost = True
 
         # ---- stuck handling
         spd = math.hypot(me["vel"][0], me["vel"][1])
@@ -753,7 +774,7 @@ class Bot:
         if aim_target is None:
             # shoot NPC drones / crates when calm and healthy
             if npcs and hpf > 0.6:
-                cands = [n for n in npcs if hdist(n["pos"], pos) < 90 and self.los_mech(pos, muzzle, n)]
+                cands = [n for n in npcs if hdist(n["pos"], pos) < 150 and self.los_mech(pos, muzzle, n)]
                 if cands:
                     npc_t = min(cands, key=lambda n: hdist(n["pos"], pos))
             if npc_t is None:
@@ -858,42 +879,68 @@ class Bot:
         return act
 
     def loot_goal(self, obs, pos, kinds, slot1, hpf, now):
+        """Cheapest worthwhile thing to walk to: cost is metres of travel minus a value bonus."""
         best, bs = None, 1e9
+        z = obs["zone"]
+        late = now > z["shrink_start"] - 25
+        W = self.world
+
+        prev = getattr(self, "farm_goal", None)
+        bl = self.farm_bl
+
+        def consider(p, cost, keep=False):
+            nonlocal best, bs
+            if not keep and bl and any(hdist(p, q) < 6 and now - tq < 60 for q, tq in bl):
+                return
+            if prev is not None and hdist(p, prev) < 6:
+                cost -= 30  # commitment: don't dither between two targets
+            if cost < bs and (not late or self.zone_ok(p, obs, 5)):
+                bs, best = cost, (p[0], p[1])
+
         cur_rank = WEAPON_RANK.get(slot1["kind"], 0) if slot1 else 0
         for iid, (k, ip, t) in self.items.items():
             if k in kinds or WEAPON_RANK.get(k, 0) <= cur_rank:
                 continue
             if now - self.taken_fail.get(iid, -99) < 3:
                 continue
+            if W and ip[2] > W.ground(ip[0], ip[1]) + 3:
+                continue  # on a roof
             d = hdist(ip, pos)
-            if abs(ip[2] - pos[2]) > 6 and d < 6:
-                pass
-            if d > 180:
-                continue
-            s = d - 40 * WEAPON_RANK.get(k, 0)
-            if s < bs:
-                bs, best = s, (ip[0], ip[1])
+            if d < 220:
+                consider(ip, d - 45 * (WEAPON_RANK.get(k, 0) - cur_rank))
         for c in obs.get("cubes", []):
-            d = hdist(c["pos"], pos)
-            if d < 120 and d - 30 < bs:
-                bs, best = d - 30, (c["pos"][0], c["pos"][1])
+            cp = c["pos"]
+            if W and cp[2] > W.ground(cp[0], cp[1]) + 3 and abs(cp[2] - pos[2]) > 3:
+                continue
+            d = hdist(cp, pos)
+            if d < 200:
+                consider(cp, d - 70)
         if not obs.get("cubes"):
             for c in self.cube_spots:
-                d = hdist(c, pos)
-                if d < 220 and d - 60 < bs:
-                    bs, best = d - 60, (c[0], c[1])
-        # supply drop
+                consider(c, hdist(c, pos) - 90)
         for dr in obs.get("drops", []):
             d = hdist(dr["pos"], pos)
-            if d < 320 and dr.get("lands_in", 99) < d / 11 + 8:
-                if d - 150 < bs:
-                    bs, best = d - 150, (dr["pos"][0], dr["pos"][1])
-        # crates: approach to shooting range
-        if best is None or bs > 40:
-            for cid, (cp, chp, t) in self.crates.items():
-                d = hdist(cp, pos)
-                if 50 < d < 150 and d < bs + 50:
-                    bs, best = d - 50, (cp[0], cp[1])
+            if d < 340 and dr.get("lands_in", 99) < d / 11 + 10:
+                consider(dr["pos"], d - 170, True)
+        for cid, (cp, chp, t) in self.crates.items():
+            if W and cp[2] > W.ground(cp[0], cp[1]) + 3:
+                continue
+            consider(cp, hdist(cp, pos) - 35)
+        if hpf > 0.6:
+            for nid, (np_, t) in self.npc_mem.items():
+                consider(np_, hdist(np_, pos) - 55)
+        # give up on a target we have chased for 14 s without getting anything (roof, walled in, bugged)
+        cubes_now = obs["self"].get("cubes", 0)
+        if best is None or prev is None or hdist(best, prev) > 6 or cubes_now != self.farm_cubes:
+            self.farm_since = now
+            self.farm_cubes = cubes_now
+        elif any(hdist(dr["pos"], best) < 2 for dr in obs.get("drops", [])):
+            self.farm_since = now
+        elif now - self.farm_since > 14:
+            bl.append((best, now))
+            del bl[:-12]
+            self.farm_since = now
+        self.farm_goal = best
         return best
 
     def find_cover(self, obs, pos, threats, now):

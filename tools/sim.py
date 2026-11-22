@@ -129,7 +129,11 @@ class Sim:
         for _ in range(27):
             p = s.free_point(s.zc, s.zr * 0.9)
             s.crates[cid] = dict(pos=[p[0], p[1], s.W.ground(*p)], hp=300.0); cid += 1
-        s.drops = []; s.drop_i = 0; s.drops_taken = 0
+        nid_ = 100
+        for _ in range(12):
+            p = s.free_point(s.zc, s.zr * 0.9)
+            s.crates[nid_] = dict(pos=[p[0], p[1], s.W.ground(*p)], hp=350.0, npc=True); nid_ += 1
+        s.drops = []; s.drop_i = 0; s.drops_taken = 0; s.cube_log = {}
         s.seen = {}  # id -> last seen t
         s.enemy_knows = -99; s.last_known = None
         s.log = dict(stuck=0.0, death=None, first_w=None, modes={})
@@ -209,6 +213,7 @@ class Sim:
             z += m.vel[2] * DT
             if z <= fl and m.vel[2] <= 0:
                 z = fl; m.vel[2] = 0; m.grounded = True
+        m.vel[0] = (x - m.pos[0]) / DT; m.vel[1] = (y - m.pos[1]) / DT
         m.pos = [x, y, z]
         # aim slew
         dy = wrap(m.cmd_aim[0] - m.aim[0]); mx = st["turn_rate"] * DT
@@ -349,17 +354,18 @@ class Sim:
             # crates
             hitc = None
             for cid, c in s.crates.items():
-                if abs(c["pos"][0] - e[0]) < 8 and abs(c["pos"][1] - e[1]) < 8:
+                if abs(c["pos"][0] - e[0]) < 16 and abs(c["pos"][1] - e[1]) < 16:
                     rx, ry = c["pos"][0] - o[0], c["pos"][1] - o[1]
                     tp = max(0, min(stepd, rx * d[0] + ry * d[1]))
-                    if math.hypot(o[0] + d[0] * tp - c["pos"][0], o[1] + d[1] * tp - c["pos"][1]) < 1.7 and abs(o[2] + d[2] * tp - c["pos"][2] - 1.2) < 1.6:
+                    if math.hypot(o[0] + d[0] * tp - c["pos"][0], o[1] + d[1] * tp - c["pos"][1]) < 1.7 and abs(o[2] + d[2] * tp - c["pos"][2] - 1.5) < 1.9:
                         hitc = cid; break
             if hitc is not None:
                 c = s.crates[hitc]; c["hp"] -= p["dmg"]
                 if c["hp"] <= 0:
                     del s.crates[hitc]
-                    s.cubes[s.next_cube] = list(c["pos"]); s.next_cube += 1
-                    if s.rng.random() < 0.5:
+                    for _ in range(2 if c.get("npc") else 1):
+                        s.cubes[s.next_cube] = [c["pos"][0] + s.rng.uniform(-1, 1), c["pos"][1] + s.rng.uniform(-1, 1), c["pos"][2]]; s.next_cube += 1
+                    if not c.get("npc") and s.rng.random() < 0.5:
                         s.pickups[s.next_pick] = (s.rng.choice(["mortar", "laser", "lightning"]), list(c["pos"])); s.next_pick += 1
                 continue
             p["pos"] = e; p["left"] -= stepd
@@ -398,7 +404,7 @@ class Sim:
         nc, nr = zone["next_center"], zone["next_radius"]
         outside = hd(m.pos, nc) > max(nr - 15, nr * 0.6)
         goal = None
-        engage = me.alive and los and (hunting or d < NONHUNT_R)
+        engage = me.alive and los and (hunting or d < NONHUNT_R) and not PASSIVE
         if outside and (not engage or hd(m.pos, zone["center"]) > zone["radius"] - 10):
             goal = (nc[0] + (m.pos[0] - nc[0]) * 0.4, nc[1] + (m.pos[1] - nc[1]) * 0.4); engage_move = False
         else:
@@ -440,7 +446,7 @@ class Sim:
             m.move = [mx / n, my / n]
             m.boost = hunting and d > pref + 40 and m.energy > 40
             return
-        if goal is None and hunting and s.last_known:
+        if goal is None and hunting and s.last_known and not PASSIVE:
             goal = (s.last_known[0], s.last_known[1])
             if hd(m.pos, goal) < 15 and not los:
                 goal = None; 
@@ -470,7 +476,7 @@ class Sim:
         me = s.me
         ms = []
         for m in s.mechs[1:]:
-            if not m.alive: continue
+            if not m.alive or PASSIVE: continue
             if s.sees(me, m.pos, 9 * m.scale()): s.seen[m.id] = s.t
             if s.t - s.seen.get(m.id, -99) <= 5.0:
                 ms.append(dict(id=m.id, kind="mech", pos=[round(x, 2) for x in m.pos], vel=[round(x, 2) for x in m.vel], aim=[round(m.aim[0], 3), round(m.aim[1], 3)],
@@ -489,8 +495,9 @@ class Sim:
                    self=dict(id=0, pos=[round(x, 2) for x in me.pos], vel=[round(x, 2) for x in me.vel], aim=[round(me.aim[0], 4), round(me.aim[1], 4)],
                              hp=round(me.hp), max_hp=round(me.max_hp), energy=round(me.energy), max_energy=me.st["energy"], grounded=me.grounded,
                              cubes=me.cubes, upgrades=list(me.ups), in_zone=hd(me.pos, zc) <= zone["radius"], weapons=wl, stats=st),
-                   mechs=ms, projectiles=[],
-                   crates=[dict(id=i, pos=c["pos"], hp=c["hp"]) for i, c in s.crates.items() if hd(c["pos"], me.pos) < 200 and s.sees(me, c["pos"], 2.4)],
+                   mechs=ms + [dict(id=i, kind="npc", pos=c["pos"], vel=[0, 0, 0], aim=[0, 0], hp=c["hp"], max_hp=350) for i, c in s.crates.items()
+                               if c.get("npc") and hd(c["pos"], me.pos) < 200 and s.sees(me, c["pos"], 3.5)], projectiles=[],
+                   crates=[dict(id=i, pos=c["pos"], hp=c["hp"]) for i, c in s.crates.items() if not c.get("npc") and hd(c["pos"], me.pos) < 200 and s.sees(me, c["pos"], 2.4)],
                    cubes=[dict(id=i, pos=p) for i, p in s.cubes.items() if hd(p, me.pos) < 200 and s.sees(me, p, 1.0)],
                    pickups=[dict(id=i, kind=k, pos=p) for i, (k, p) in s.pickups.items() if hd(p, me.pos) < 200 and s.sees(me, p, 1.0)],
                    sounds=[], beams=[], events=me.events,
@@ -593,6 +600,8 @@ class Sim:
                         del s.cubes[cid]; m.cubes += 1; m.recompute(cfg); m.events.append(dict(type="pickup", cubes=m.cubes))
                 s.offers(m)
             s.t += DT; s.tick += 1
+            for T_ in (60, 100, 150):
+                if T_ not in s.cube_log and s.t >= T_: s.cube_log[T_] = me.cubes
             alive = sum(m.alive for m in s.mechs)
             if not me.alive or alive == 1: break
         alive = sum(m.alive for m in s.mechs)
@@ -601,11 +610,12 @@ class Sim:
             place = 1 + sum(1 for m in s.mechs[1:] if m.alive and m.hp > me.hp)
         return dict(seed=s.seed, score=16 - place, kills=s.kills, t=round(s.t, 1), last=s.last_hit if not me.alive else None,
                     hunters=len(s.hunters()), dealt=round(me.dealt), taken={k: round(v) for k, v in me.taken.items()}, zone=round(me.zone_dmg),
-                    stuck=round(s.log["stuck"], 1), first_w=s.log["first_w"], loadout=[w["kind"] for w in me.weapons if w], cubes=me.cubes, drops=s.drops_taken,
+                    stuck=round(s.log["stuck"], 1), first_w=s.log["first_w"], loadout=[w["kind"] for w in me.weapons if w], cubes=me.cubes, drops=s.drops_taken, clog=s.cube_log,
                     ups=me.ups, modes=s.log["modes"], gun=(getattr(me, "ghits", 0)), laser=(getattr(me, "hits_l", 0), getattr(me, "shots_l", 0)), exc=s.log.get("exc"))
 
 
 LATE_T = float(os.environ.get("SIM_LATE", 255.0))
+PASSIVE = bool(os.environ.get("SIM_PASSIVE"))
 NONHUNT_R = float(os.environ.get("SIM_NHR", 50))
 HUNT_PER_KILL = float(os.environ.get("SIM_HPK", 0.5))
 
@@ -634,4 +644,4 @@ if __name__ == "__main__":
     for r in res:
         k = (r["last"][0] if r["last"] else "survived"); causes[k] = causes.get(k, 0) + 1
     print(f"\nMEAN score {sum(r['score'] for r in res)/n:.2f}  kills {sum(r['kills'] for r in res)/n:.2f}  death_t {sum(r['t'] for r in res)/n:.0f}s  "
-          f"cubes {sum(r['cubes'] for r in res)/n:.1f} drops {sum(r['drops'] for r in res)/n:.2f} zone_dmg {sum(r['zone'] for r in res)/n:.0f}  stuck {sum(r['stuck'] for r in res)/n:.1f}s  causes {causes}  ({time.time()-t0:.0f}s)")
+          f"cubes@60/100/150 {'/'.join('%.1f' % (sum(r['clog'].get(T, r['cubes']) for r in res)/n) for T in (60, 100, 150))} end {sum(r['cubes'] for r in res)/n:.1f} drops {sum(r['drops'] for r in res)/n:.2f} zone_dmg {sum(r['zone'] for r in res)/n:.0f}  stuck {sum(r['stuck'] for r in res)/n:.1f}s  causes {causes}  ({time.time()-t0:.0f}s)")
