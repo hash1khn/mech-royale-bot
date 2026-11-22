@@ -15,7 +15,8 @@ Python bot for the Builders Mech Royale track (mechfight/1). Entry: `bot.py`, wr
 | v6c | v6b + seek last seen enemy | 4.63 |
 | v6d | v6a, ignore mechs beyond 120 m, range 100/130, cube radius 150 | 5.11 |
 | v7 | v6d + farming director (drone memory, commitment, stand-off, give-up list, travel boost): local cube income +60% | 5.44 |
-| v8 | laser is the priority pickup (long walk allowed), laser upgrades first, engage to 210 m with a laser or 10 cubes, stop collecting cubes past 10 (size penalty) | pending |
+| v8 | laser is the priority pickup (long walk allowed), laser upgrades first, engage to 210 m with a laser or 10 cubes, stop collecting cubes past 10 (size penalty) | 5.39 |
+| v9 | fight logic reworked after studying the public top bots: engage only hunters (close, closing, aiming, shooting, weak), sticky target, 1.5 s losing pulses instead of hiding, finish-rush, 16-point position sampler (range, line of fire, exposure to others), dodge bullets/shells/charging lasers, laser lethal release and hold through LOS flicker, tight gun gating, no mortar, farm above 50% HP | pending |
 
 ## Replay findings (mechanics-v2-16 sample)
 
@@ -25,3 +26,8 @@ A linear lead (0.8 x velocity, +0.075 s latency) scored against their recorded m
 ## Local simulator
 
 `python3 tools/sim.py --n 100` plays rough local matches (real map, zone, weapons, scripted squad of hunters). It is not the real server: use it to find bugs and A/B changes, then confirm with a submission. Needs `check/` and `arena/` from the kit next to the repo files.
+
+## What moved the score (retrospective, 2026-11-22)
+
+Only cube income moved it: v6a farming +0.76, v7 farming director +0.33. Range, chasing, laser priority: all inside the +-0.3 noise.
+Research from other teams' public notes: score ~ own kills before ~300 s; disengaging/hiding loses; the 6.2-6.4 plateau is the MIT giddygiddyboy Go bot (5.73 unchanged). v9 ports its ideas (not its code) into our bot.
